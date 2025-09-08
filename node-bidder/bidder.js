@@ -3,7 +3,7 @@ import express from "express";
 import zlib from "zlib";
 
 function makeApp() {
-    const app = express(); // do NOT add app.use(express.json())
+    const app = express(); // no global body parser
 
     app.post("/bid", (req, res) => {
     let aborted = false;
@@ -19,30 +19,38 @@ function makeApp() {
 
       req.on("end", () => {
           const s = first.toString("utf8");
-          // cheap tmax sniff: ..."tmax":123...
+
+          // Extract tmax (fallback 300)
           let tmax = 300;
           try {
-          const m = /"tmax"\s*:\s*(\d+)/.exec(s);
+              const m = /"tmax"\s*:\s*(\d+)/.exec(s);
               if (m) tmax = Math.max(1, parseInt(m[1], 10) || 300);
-          } catch { } // fallback 300
+        } catch { }
 
-          // 80/20 on-time/late split (configurable)
-          const lateFrac = Number(process.env.LATE_FRACTION ?? 0.20);
-          const headroomMs = Number(process.env.HEADROOM_MS ?? 3); // keep on-time < tmax
-          const lateSpanMs = Number.isFinite(Number(process.env.LATE_SPAN_MS))
-              ? Number(process.env.LATE_SPAN_MS)
-              : Math.max(20, Math.floor(tmax * 0.5)); // how far beyond tmax
+          // Tuning knobs
+          const minDelay = Number(process.env.MIN_DELAY_MS ?? 120);   // <-- enforce ≥ 120ms
+          const headroomMs = Number(process.env.HEADROOM_MS ?? 3);    // keep "on-time" strictly < tmax
+          const lateFrac = Number(process.env.LATE_FRACTION ?? 0.20); // ~20% late
+          const lateSpanMs = Number.isFinite(+process.env.LATE_SPAN_MS)
+              ? +process.env.LATE_SPAN_MS
+              : Math.max(20, Math.floor(tmax * 0.5));                   // how far beyond tmax to spread
 
-          const roll = Math.random();
+          // Can we satisfy on-time AND ≥ minDelay?
+          const maxOnTime = Math.max(0, tmax - headroomMs);
+          const canDoOnTimeAboveMin = maxOnTime > minDelay;
+
           let delay;
-          if (roll < lateFrac) {
-              // late: strictly > tmax
-              delay = tmax + 1 + Math.floor(Math.random() * lateSpanMs);
+          const roll = Math.random();
+          if (roll < lateFrac || !canDoOnTimeAboveMin) {
+              // Late path: strictly beyond tmax and still ≥ minDelay
+              const base = Math.max(minDelay, tmax + 1);
+              const span = Math.max(1, lateSpanMs);
+              delay = base + Math.floor(Math.random() * span);
           } else {
-              // on-time: [0 .. tmax - headroom]
-              const maxOnTime = Math.max(0, tmax - headroomMs);
-              delay = Math.floor(Math.random() * (maxOnTime + 1));
-          }
+            // On-time path: pick uniformly in [minDelay, maxOnTime]
+            const span = Math.max(0, maxOnTime - minDelay);
+            delay = minDelay + Math.floor(Math.random() * (span + 1));
+        }
 
         setTimeout(() => {
             if (aborted || res.headersSent || res.writableEnded || res.destroyed) return;
@@ -59,14 +67,14 @@ function makeApp() {
             const acceptEnc = String(req.headers["accept-encoding"] || "");
             if (acceptEnc.includes("gzip")) {
               const gz = zlib.gzipSync(Buffer.from(payload, "utf8"));
-                res.status(200)
-                    .set("Content-Type", "application/json")
-                    .set("Content-Encoding", "gzip")
-                    .send(gz);
+              res.status(200)
+                  .set("Content-Type", "application/json")
+                  .set("Content-Encoding", "gzip")
+                  .send(gz);
         } else {
-                res.status(200)
-                    .set("Content-Type", "application/json")
-                    .send(payload);
+              res.status(200)
+                  .set("Content-Type", "application/json")
+                  .send(payload);
           }
       }, delay);
     });
@@ -79,7 +87,7 @@ function makeApp() {
 const ports = (process.env.PORTS || "9100,9101,9102,9103,9104")
     .split(",").map(s => parseInt(s.trim(), 10)).filter(Number.isFinite);
 
-// one Express app can listen on multiple ports
+// One Express instance can listen on many ports
 const app = makeApp();
 ports.forEach(p =>
     app.listen(p, "0.0.0.0", () => console.log(`Stub bidder listening on :${p}`))
