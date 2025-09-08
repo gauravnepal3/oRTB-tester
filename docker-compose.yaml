@@ -1,13 +1,13 @@
 services:
   bidder:
-  build: ./stub-bidder
-  container_name: bidder
-  environment:
-    - PORTS=9100,9101,9102,9103,9104
-  ports:
-    - "9100:9100"
-    - "9101:9101"
-    - "9102:9102"
-    - "9103:9103"
-    - "9104:9104"
-  restart: unless-stopped
+    build: ./stub-bidder
+    container_name: bidder-tester
+    environment:
+      - PORTS=9100,9101,9102,9103,9104
+    ports:
+      - "9100:9100"
+      - "9101:9101"
+      - "9102:9102"
+      - "9103:9103"
+      - "9104:9104"
+    restart: unless-stopped
