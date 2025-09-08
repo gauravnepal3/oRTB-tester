@@ -1,13 +1,32 @@
 services:
-  bidder:
-    build: ./stub-bidder
-    container_name: bidder
+  x-bidder: &bidder
+    build: ./node-bidder
     environment:
-      - PORTS=9100,9101,9102,9103,9104
-    ports:
-      - "9100:9100"
-      - "9101:9101"
-      - "9102:9102"
-      - "9103:9103"
-      - "9104:9104"
+      - PORT=9100
+    expose: ["9100"]        # internal port
     restart: unless-stopped
+
+  bidder1:
+    <<: *bidder
+    container_name: bidder1
+    ports: ["9100:9100"]
+
+  bidder2:
+    <<: *bidder
+    container_name: bidder2
+    ports: ["9101:9100"]
+
+  bidder3:
+    <<: *bidder
+    container_name: bidder3
+    ports: ["9102:9100"]
+
+  bidder4:
+    <<: *bidder
+    container_name: bidder4
+    ports: ["9103:9100"]
+
+  bidder5:
+    <<: *bidder
+    container_name: bidder5
+    ports: ["9104:9100"]
