@@ -1,4 +1,4 @@
-// server.js
+// bidder.js
 import express from "express";
 import zlib from "zlib";
 
@@ -9,7 +9,7 @@ function makeApp() {
     let aborted = false;
     req.on("aborted", () => { aborted = true; });
 
-        // Drain body; just keep a small prefix for tmax sniffing
+        // Drain body; keep small prefix to sniff tmax/id
     let first = Buffer.alloc(0);
     req.on("data", (chunk) => {
         if (first.length < 8192) {
@@ -25,29 +25,26 @@ function makeApp() {
           try {
               const m = /"tmax"\s*:\s*(\d+)/.exec(s);
               if (m) tmax = Math.max(1, parseInt(m[1], 10) || 300);
-        } catch { }
+        } catch { /* ignore */ }
 
           // Tuning knobs
-          const minDelay = Number(process.env.MIN_DELAY_MS ?? 120);   // <-- enforce ≥ 120ms
-          const headroomMs = Number(process.env.HEADROOM_MS ?? 3);    // keep "on-time" strictly < tmax
-          const lateFrac = Number(process.env.LATE_FRACTION ?? 0.20); // ~20% late
+          const minDelay = Number(process.env.MIN_DELAY_MS ?? 120);
+          const headroomMs = Number(process.env.HEADROOM_MS ?? 3);
+          const lateFrac = Number(process.env.LATE_FRACTION ?? 0.20);
           const lateSpanMs = Number.isFinite(+process.env.LATE_SPAN_MS)
               ? +process.env.LATE_SPAN_MS
-              : Math.max(20, Math.floor(tmax * 0.5));                   // how far beyond tmax to spread
+            : Math.max(20, Math.floor(tmax * 0.5));
 
-          // Can we satisfy on-time AND ≥ minDelay?
+          // Decide delay (≥ minDelay, ~20% late)
           const maxOnTime = Math.max(0, tmax - headroomMs);
-          const canDoOnTimeAboveMin = maxOnTime > minDelay;
+          const canOnTimeAboveMin = maxOnTime > minDelay;
 
           let delay;
           const roll = Math.random();
-          if (roll < lateFrac || !canDoOnTimeAboveMin) {
-              // Late path: strictly beyond tmax and still ≥ minDelay
+          if (roll < lateFrac || !canOnTimeAboveMin) {
               const base = Math.max(minDelay, tmax + 1);
-              const span = Math.max(1, lateSpanMs);
-              delay = base + Math.floor(Math.random() * span);
-          } else {
-            // On-time path: pick uniformly in [minDelay, maxOnTime]
+            delay = base + Math.floor(Math.random() * Math.max(1, lateSpanMs));
+        } else {
             const span = Math.max(0, maxOnTime - minDelay);
             delay = minDelay + Math.floor(Math.random() * (span + 1));
         }
@@ -64,17 +61,24 @@ function makeApp() {
               blob: "x".repeat(Number(process.env.BLOB_BYTES ?? 2048))
         });
 
-            const acceptEnc = String(req.headers["accept-encoding"] || "");
-            if (acceptEnc.includes("gzip")) {
-              const gz = zlib.gzipSync(Buffer.from(payload, "utf8"));
+            // gzip disabled by default to avoid CPU churn; enable with GZIP=1
+            const doGzip = process.env.GZIP === "1" &&
+                String(req.headers["accept-encoding"] || "").includes("gzip");
+
+            if (doGzip) {
+                // async gzip (non-blocking)
+                zlib.gzip(Buffer.from(payload, "utf8"), (err, gz) => {
+                    if (err) {
+                        res.status(200).set("Content-Type", "application/json").send(payload);
+                    } else {
               res.status(200)
                   .set("Content-Type", "application/json")
                   .set("Content-Encoding", "gzip")
                   .send(gz);
+                  }
+              });
         } else {
-              res.status(200)
-                  .set("Content-Type", "application/json")
-                  .send(payload);
+              res.status(200).set("Content-Type", "application/json").send(payload);
           }
       }, delay);
     });
@@ -87,8 +91,5 @@ function makeApp() {
 const ports = (process.env.PORTS || "9100,9101,9102,9103,9104")
     .split(",").map(s => parseInt(s.trim(), 10)).filter(Number.isFinite);
 
-// One Express instance can listen on many ports
 const app = makeApp();
-ports.forEach(p =>
-    app.listen(p, "0.0.0.0", () => console.log(`Stub bidder listening on :${p}`))
-);
+ports.forEach(p => app.listen(p, "0.0.0.0", () => console.log(`Stub bidder listening on :${p}`)));
