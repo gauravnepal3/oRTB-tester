@@ -1,0 +1,18 @@
+services:
+  bidder:
+    build:
+      context: ./node-bidder        # ✅ must exist
+      dockerfile: Dockerfile
+    environment:
+      PORTS: 9100,9101,9102,9103,9104
+      MIN_MS: 40
+      MAX_MS: 220
+      STATUS: 200
+      RESPECT_TMAX: "true"
+      PAYLOAD_BYTES: 1024
+    ports:
+      - "9100:9100"
+      - "9101:9101"
+      - "9102:9102"
+      - "9103:9103"
+      - "9104:9104"
